@@ -1,47 +1,71 @@
 from pathlib import Path
 from tkinter import Tk, Canvas, Toplevel, Entry, Button, PhotoImage
+import json
 
+STATE_PATH = Path(__file__).parent / "todo_state.json"
 ASSETS_PATH = Path(__file__).parent / "assets"
-
 MAX_ROWS = 4
 
 class TodoApp:
     def __init__(self):
+        self.items = []
+        self._id_counter = 0
+        self.today_offset = 0
+        self.comp_offset = 0
+        self.popup_open = False
+        self.active_section = None 
+        self._load_state()
+
+        # — UI setup —
         self.window = Tk()
         self.window.title("To-Do-List")
         self.window.geometry("350x421")
         self.window.configure(bg="#778DA9")
         self.window.resizable(False, False)
 
-        # load optional logo
+        # optional window icon
         logo_path = ASSETS_PATH / "logo.png"
         if logo_path.is_file():
             icon_img = PhotoImage(master=self.window, file=logo_path)
             self.window.iconphoto(True, icon_img)
 
-        # — State —
-        self.items = []  
-        self._id_counter = 0
-        self.today_offset = 0
-        self.comp_offset = 0
-        self.active_section = None 
-        self.popup_open = False
-
-        def R(fn):  return ASSETS_PATH / fn
+        # load all other images
+        def R(fn): return ASSETS_PATH / fn
         self.images = {
-            "bg1":  PhotoImage(master=self.window, file=R("entry_1.png")),
-            "bg2":  PhotoImage(master=self.window, file=R("entry_2.png")),
-            "box":  PhotoImage(master=self.window, file=R("minibox.png")),
-            "tick": PhotoImage(master=self.window, file=R("tick.png")),
-            "bin":  PhotoImage(master=self.window, file=R("dustbin.png")),
-            "plus": PhotoImage(master=self.window, file=R("plus.png")),
+            "bg1":      PhotoImage(master=self.window, file=R("entry_1.png")),
+            "bg2":      PhotoImage(master=self.window, file=R("entry_2.png")),
+            "box":      PhotoImage(master=self.window, file=R("minibox.png")),
+            "tick":     PhotoImage(master=self.window, file=R("tick.png")),
+            "bin":      PhotoImage(master=self.window, file=R("dustbin.png")),
+            "plus":     PhotoImage(master=self.window, file=R("plus.png")),
             "input_bg": PhotoImage(master=self.window, file=R("new_input.png")),
             "enter":    PhotoImage(master=self.window, file=R("Enter.png")),
             "cancel":   PhotoImage(master=self.window, file=R("Cancel.png")),
         }
+
         self._build_main_canvas()
         self.redraw_items()
         self.window.bind_all("<MouseWheel>", self._on_mousewheel)
+
+    def _load_state(self):
+        try:
+            data = json.loads(STATE_PATH.read_text())
+            self.items = data["items"]
+            self._id_counter = data["next_id"]
+        except (FileNotFoundError, json.JSONDecodeError, KeyError):
+            self.items = []
+            self._id_counter = 0
+
+    def _save_state(self):
+        payload = {
+            "items": self.items,
+            "next_id": self._id_counter
+        }
+        STATE_PATH.write_text(json.dumps(payload, indent=2))
+
+    def _on_close(self):
+        self._save_state()
+        self.window.destroy()
 
     def _new_id(self):
         i = self._id_counter
@@ -50,11 +74,18 @@ class TodoApp:
 
     def add_item(self, text, state="today"):
         self.items.append({"id": self._new_id(), "text": text, "state": state})
+        total = sum(1 for i in self.items if i["state"] == "today")
+        if total > MAX_ROWS:
+            self.today_offset = total - MAX_ROWS
+        self._clamp_offsets()
+        self.redraw_items()
+        self._save_state()       
 
     def delete_item(self, item_id):
         self.items = [i for i in self.items if i["id"] != item_id]
         self._clamp_offsets()
         self.redraw_items()
+        self._save_state()           
 
     def toggle_item(self, item_id):
         for i in self.items:
@@ -63,6 +94,7 @@ class TodoApp:
                 break
         self._clamp_offsets()
         self.redraw_items()
+        self._save_state()           
 
     def _clamp_offsets(self):
         tcount = sum(1 for i in self.items if i["state"] == "today")
@@ -70,7 +102,8 @@ class TodoApp:
         self.today_offset = max(0, min(self.today_offset, max(0, tcount - MAX_ROWS)))
         self.comp_offset  = max(0, min(self.comp_offset,  max(0, dcount - MAX_ROWS)))
 
-    # ─── MAIN CANVAS ────────────────────────────────────────────
+    # ─── MAIN CANVAS ─────────────────────────────────────────────
+
     def _build_main_canvas(self):
         c = self.window
         self.canvas = Canvas(c, bg="#778DA9", width=350, height=421,
@@ -184,6 +217,7 @@ class TodoApp:
             pop.destroy()
 
         pop.protocol("WM_DELETE_WINDOW", close_popup)
+        pop.bind("<Escape>", lambda e: close_popup())
 
         c2 = Canvas(pop, bg="#778DA9",
                     width=229, height=160,
@@ -209,11 +243,6 @@ class TodoApp:
             txt = entry.get().strip()
             if txt:
                 self.add_item(txt, "today")
-                total = sum(1 for i in self.items if i["state"] == "today")
-                if total > MAX_ROWS:
-                    self.today_offset = total - MAX_ROWS
-                self._clamp_offsets()
-                self.redraw_items()
             close_popup()
 
         entry.bind("<Return>", do_add)
